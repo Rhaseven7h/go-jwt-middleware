@@ -42,11 +42,11 @@ import (
 
 var myHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   user, err := jwtmiddleware.GetTokenFromContext(r, "user")
-	if err != nil {
-		fmt.Fprintf(w, "error occurred: %s", err.Error())
-		return
-	}
-	claims := user.Claims.(jwt.MapClaims)
+  if err != nil {
+    fmt.Fprintf(w, "error occurred: %s", err.Error())
+    return
+  }
+  claims := user.Claims.(jwt.MapClaims)
   fmt.Fprintf(w, "This is an authenticated request")
   fmt.Fprintf(w, "Claim content:\n")
   for k, v := range claims {
@@ -88,10 +88,15 @@ import (
 )
 
 var myHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-  user := context.Get(r, "user")
+  user, err := jwtmiddleware.GetTokenFromContext(r, "user")
+  if err != nil {
+    fmt.Fprintf(w, "error occurred: %s", err.Error())
+    return
+  }
+  claims := user.Claims.(jwt.MapClaims)
   fmt.Fprintf(w, "This is an authenticated request")
   fmt.Fprintf(w, "Claim content:\n")
-  for k, v := range user.(*jwt.Token).Claims {
+  for k, v := range claims {
     fmt.Fprintf(w, "%s :\t%#v\n", k, v)
   }
 })
