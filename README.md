@@ -4,6 +4,12 @@ A middleware that will check that a [JWT](http://jwt.io/) is sent on the `Author
 
 This module lets you authenticate HTTP requests using JWT tokens in your Go Programming Language applications. JWTs are typically used to protect API endpoints, and are often issued using OpenID Connect.
 
+## 2017/03/19 NOTE: Go 1.7+ Context usedin this fork / DOES NOT USE Gorilla Context
+
+Please note that this fork of *jwtMiddleware* switches from Gorilla context to
+Go 1.7+ context from standard library. Please see the updated examples on usage
+below, as the use is slightly different and NOT BACKWARDS Compatible.
+
 ## Key Features
 
 * Ability to **check the `Authorization` header for a JWT**
@@ -29,14 +35,19 @@ import (
 
   "github.com/auth0/go-jwt-middleware"
   "github.com/dgrijalva/jwt-go"
-  "github.com/gorilla/context"
+  "context"
 )
 
 var myHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-  user := context.Get(r, "user")
+  user, err := jwtmiddleware.GetTokenFromContext(r, "user")
+	if err != nil {
+		fmt.Fprintf(w, "error occurred: %s", err.Error())
+		return
+	}
+	claims := user.Claims.(jwt.MapClaims)
   fmt.Fprintf(w, "This is an authenticated request")
   fmt.Fprintf(w, "Claim content:\n")
-  for k, v := range user.(*jwt.Token).Claims {
+  for k, v := range claims {
     fmt.Fprintf(w, "%s :\t%#v\n", k, v)
   }
 })
@@ -70,7 +81,7 @@ import (
   "github.com/auth0/go-jwt-middleware"
   "github.com/codegangsta/negroni"
   "github.com/dgrijalva/jwt-go"
-  "github.com/gorilla/context"
+  "context"
   "github.com/gorilla/mux"
 )
 
