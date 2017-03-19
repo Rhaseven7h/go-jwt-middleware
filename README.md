@@ -4,7 +4,9 @@ A middleware that will check that a [JWT](http://jwt.io/) is sent on the `Author
 
 This module lets you authenticate HTTP requests using JWT tokens in your Go Programming Language applications. JWTs are typically used to protect API endpoints, and are often issued using OpenID Connect.
 
-## 2017/03/19 NOTE: Go 1.7+ Context usedin this fork / DOES NOT USE Gorilla Context
+## 2017/03/19 NOTE
+
+<span style="color:red">*This fork uses Go 1.7+'s Context. This fork DOES NOT USE Gorilla Context.*</span>
 
 Please note that this fork of *jwtMiddleware* switches from Gorilla context to
 Go 1.7+ context from standard library. Please see the updated examples on usage
