@@ -19,6 +19,10 @@ import (
 // token should be written
 const defaultAuthorizationHeaderName = "Authorization"
 
+// defaultAccessHeaderName is the default header name where the Auth
+// token should be written
+const defaultAccessHeaderName = "Access"
+
 // envVarClientSecretName the environment variable to read the JWT environment
 // variable
 const envVarClientSecretName = "CLIENT_SECRET_VAR_SHHH"
@@ -67,7 +71,7 @@ func TestAuthenticatedRequest(t *testing.T) {
 			}
 			responseString := string(responseBytes)
 			// check that the encoded data in the jwt was properly returned as json
-			So(responseString, ShouldEqual, `{"text":"bar"}`)
+			So(responseString, ShouldEqual, `{"text":"foo=bar:access_token=DUMMY_ACCESS_TOKEN"}`)
 		})
 		Convey("Authenticated GET to /protected path should return a 200 reponse if expected algorithm is correct", func() {
 			expectedAlgorithm := jwt.SigningMethodHS256
@@ -79,7 +83,7 @@ func TestAuthenticatedRequest(t *testing.T) {
 			}
 			responseString := string(responseBytes)
 			// check that the encoded data in the jwt was properly returned as json
-			So(responseString, ShouldEqual, `{"text":"bar"}`)
+			So(responseString, ShouldEqual, `{"text":"foo=bar:access_token=DUMMY_ACCESS_TOKEN"}`)
 		})
 		Convey("Authenticated GET to /protected path should return a 401 reponse if algorithm is not expected one", func() {
 			expectedAlgorithm := jwt.SigningMethodRS256
@@ -111,6 +115,7 @@ func makeAuthenticatedRequest(method string, url string, c map[string]interface{
 			panic(e)
 		}
 		r.Header.Set(defaultAuthorizationHeaderName, fmt.Sprintf("bearer %v", s))
+		r.Header.Set(defaultAccessHeaderName, fmt.Sprintf("token %v", "DUMMY_ACCESS_TOKEN"))
 	}
 	w := httptest.NewRecorder()
 	n := createNegroniMiddleware(expectedSignatureAlgorithm)
@@ -197,13 +202,15 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 // in the token as json -> {"text":"bar"}
 func protectedHandler(w http.ResponseWriter, r *http.Request) {
 	// retrieve the token from the context (GO 1.7+ context)
-	user, err := GetTokenFromContext(r, userPropertyName)
+	bundledTokens, err := GetTokenFromContext(r, userPropertyName)
 	if err != nil {
 		respondJSON("error occurred: "+err.Error(), w)
 		return
 	}
+	user := bundledTokens.JWTToken
 	claims := user.Claims.(jwt.MapClaims)
-	respondJSON(claims["foo"].(string), w)
+	outputString := fmt.Sprintf("foo=%s:access_token=%s", claims["foo"].(string), bundledTokens.AccessToken)
+	respondJSON(outputString, w)
 }
 
 // Response quick n' dirty Response struct to be encoded as json

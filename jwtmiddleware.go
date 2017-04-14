@@ -11,6 +11,12 @@ import (
 	"github.com/dgrijalva/jwt-go"
 )
 
+// AuthAccessBundle holds both an ID JWT Token and an Access token
+type AuthAccessBundle struct {
+	JWTToken    *jwt.Token
+	AccessToken string
+}
+
 // A function called whenever an error is encountered
 type errorHandler func(w http.ResponseWriter, r *http.Request, err string)
 
@@ -37,9 +43,12 @@ type Options struct {
 	// A boolean indicating if the credentials are required or not
 	// Default value: false
 	CredentialsOptional bool
-	// A function that extracts the token from the request
+	// A function that extracts the id token from the request
 	// Default: FromAuthHeader (i.e., from Authorization header as bearer token)
 	Extractor TokenExtractor
+	// A function that extracts the access token from the request
+	// Default: FromAuthHeader (i.e., from Authorization header as bearer token)
+	AccessExtractor TokenExtractor
 	// Debug flag turns on debugging output
 	// Default: false
 	Debug bool
@@ -85,6 +94,10 @@ func New(options ...Options) *JWTMiddleware {
 		opts.Extractor = FromAuthHeader
 	}
 
+	if opts.AccessExtractor == nil {
+		opts.AccessExtractor = FromAccessHeader
+	}
+
 	return &JWTMiddleware{
 		Options: opts,
 	}
@@ -105,12 +118,12 @@ func (m *JWTMiddleware) HandlerWithNext(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	parsedToken, err := m.CheckJWT(w, r)
+	bundledTokens, err := m.CheckJWT(w, r)
 	if err != nil {
 		return
 	}
 
-	newReq := r.WithContext(context.WithValue(r.Context(), JWTContextKeyType(m.Options.UserProperty), parsedToken))
+	newReq := r.WithContext(context.WithValue(r.Context(), JWTContextKeyType(m.Options.UserProperty), bundledTokens))
 	next(w, newReq)
 }
 
@@ -119,14 +132,14 @@ func (m *JWTMiddleware) Handler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Let secure process the request. If it returns an error,
 		// that indicates the request should not continue.
-		parsedToken, err := m.CheckJWT(w, r)
+		bundledTokens, err := m.CheckJWT(w, r)
 
 		// If there was an error, do not continue.
 		if err != nil {
 			return
 		}
 
-		newReq := r.WithContext(context.WithValue(r.Context(), JWTContextKeyType(m.Options.UserProperty), parsedToken))
+		newReq := r.WithContext(context.WithValue(r.Context(), JWTContextKeyType(m.Options.UserProperty), bundledTokens))
 		h.ServeHTTP(w, newReq)
 	})
 }
@@ -146,6 +159,23 @@ func FromAuthHeader(r *http.Request) (string, error) {
 	}
 
 	return authHeaderParts[1], nil
+}
+
+// FromAccessHeader is a "TokenExtractor" that takes a give request and extracts
+// the JWT token from the Authorization header.
+func FromAccessHeader(r *http.Request) (string, error) {
+	accessHeader := r.Header.Get("Access")
+	if accessHeader == "" {
+		return "", nil // No error, just no token
+	}
+
+	// TODO: Make this a bit more robust, parsing-wise
+	accessHeaderParts := strings.Split(accessHeader, " ")
+	if len(accessHeaderParts) != 2 || strings.ToLower(accessHeaderParts[0]) != "token" {
+		return "", fmt.Errorf("Access header format must be token {token}")
+	}
+
+	return accessHeaderParts[1], nil
 }
 
 // FromParameter returns a function that extracts the token from the specified
@@ -175,14 +205,14 @@ func FromFirst(extractors ...TokenExtractor) TokenExtractor {
 
 // GetTokenFromContext is used to hide key types from the outside world
 // and at the same time provide a convenient way to retrieve the token
-func GetTokenFromContext(r *http.Request, userProperty string) (*jwt.Token, error) {
+func GetTokenFromContext(r *http.Request, userProperty string) (*AuthAccessBundle, error) {
 	t := r.Context().Value(JWTContextKeyType(userProperty))
 	if t == nil {
 		return nil, fmt.Errorf("no token found")
 	}
-	token, ok := t.(*jwt.Token)
+	token, ok := t.(*AuthAccessBundle)
 	if !ok {
-		return nil, fmt.Errorf("token found, but is not a JWT token")
+		return nil, fmt.Errorf("token found, but is not a JWT and Access bundled token")
 	}
 	return token, nil
 }
@@ -190,14 +220,24 @@ func GetTokenFromContext(r *http.Request, userProperty string) (*jwt.Token, erro
 // CheckJWT is the main function of the middleware which coordinates the
 // token check and later sends the token or an error back to the calling
 // function
-func (m *JWTMiddleware) CheckJWT(w http.ResponseWriter, r *http.Request) (*jwt.Token, error) {
+func (m *JWTMiddleware) CheckJWT(w http.ResponseWriter, r *http.Request) (*AuthAccessBundle, error) {
 	if !m.Options.EnableAuthOnOptions {
 		if r.Method == "OPTIONS" {
 			return nil, nil
 		}
 	}
 
-	// Use the specified token extractor to extract a token from the request
+	// Use the specified token extractor to extract an access token from the request
+	accessToken, err := m.Options.AccessExtractor(r)
+
+	// If debugging is turned on, log the outcome
+	if err != nil {
+		m.logf("Error extracting Access token: %v", err)
+	} else {
+		m.logf("Access Token extracted: %s", accessToken)
+	}
+
+	// Use the specified token extractor to extract an id token from the request
 	token, err := m.Options.Extractor(r)
 
 	// If debugging is turned on, log the outcome
@@ -229,6 +269,22 @@ func (m *JWTMiddleware) CheckJWT(w http.ResponseWriter, r *http.Request) (*jwt.T
 		return nil, fmt.Errorf(errorMsg)
 	}
 
+	// If the access token is empty...
+	if accessToken == "" {
+		// Check if it was required
+		if m.Options.CredentialsOptional {
+			m.logf("  No access token found (CredentialsOptional=true)")
+			// No error, just no token (and that is ok given that CredentialsOptional is true)
+			return nil, nil
+		}
+
+		// If we get here, the required token is missing
+		errorMsg := "Required access token not found"
+		m.Options.ErrorHandler(w, r, errorMsg)
+		m.logf("  Error: No access token found (CredentialsOptional=false)")
+		return nil, fmt.Errorf(errorMsg)
+	}
+
 	// Now parse the token
 	parsedToken, err := jwt.Parse(token, m.Options.ValidationKeyGetter)
 
@@ -256,10 +312,12 @@ func (m *JWTMiddleware) CheckJWT(w http.ResponseWriter, r *http.Request) (*jwt.T
 	}
 
 	m.logf("JWT: %v", parsedToken)
+	m.logf("AccessToken: %v", accessToken)
 
-	// If we get here, everything worked and we can set the
-	// user property in context.
-	// context.Set(r, m.Options.UserProperty, parsedToken)
+	bundledTokens := &AuthAccessBundle{
+		JWTToken:    parsedToken,
+		AccessToken: accessToken,
+	}
 
-	return parsedToken, nil
+	return bundledTokens, nil
 }
